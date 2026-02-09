@@ -14,6 +14,9 @@ AFRAME.registerComponent('target-behavior', {
     points: { type: 'number', default: 10 },
     hp: { type: 'number', default: 1 },
     movable: { type: 'boolean', default: false },
+    // Rayons en coordonnées locales (proportionnels au scale automatiquement)
+    // À scale 1.0 : bullseye = 0.1m monde, middle = 0.3m, outer = 0.5m
+    // À scale 0.2 : bullseye = 0.02m monde (petit), middle = 0.06m, outer = 0.1m
     centerRadius: { type: 'number', default: 0.1 },
     middleRadius: { type: 'number', default: 0.3 },
     outerRadius: { type: 'number', default: 0.5 },
@@ -51,7 +54,11 @@ AFRAME.registerComponent('target-behavior', {
       this.hitCount++;
       this.currentHp--;
 
-      /* Calcul de precision en coordonnees locales */
+      /* Calcul de precision en coordonnees locales
+       * worldToLocal compense automatiquement le scale de la cible :
+       * - Petite cible (scale 0.2) : zones plus petites en monde (plus difficile)
+       * - Grosse cible (scale 0.5) : zones plus grandes en monde (plus facile)
+       */
       _localImpact.copy(impactPoint);
       this.el.object3D.worldToLocal(_localImpact);
 
@@ -84,7 +91,7 @@ AFRAME.registerComponent('target-behavior', {
       playSound('hit-sound');
 
       this.playHitAnimation(hitZone);
-      this.showHitFeedback(_localImpact, finalPoints, hitZone);
+      this.showHitFeedback(impactPoint, finalPoints, hitZone);
 
       try {
         console.log(`🎯 [TARGET] Émission événement target-hit avec ${finalPoints} points`);
@@ -128,8 +135,74 @@ AFRAME.registerComponent('target-behavior', {
     }
   },
 
-  showHitFeedback(localPosition, points, zone) {
+  showHitFeedback(impactPoint, points, zone) {
     console.log(`✓ Hit feedback: +${points} points in ${zone} zone`);
+
+    // Créer un texte 3D flottant pour afficher les points
+    const feedback = document.createElement('a-text');
+    
+    // Position de départ : à la flèche avec offset pour sortir de la géométrie
+    const startPos = impactPoint.clone();
+    
+    // Ajouter un GROS offset vers la caméra pour éviter l'occlusion
+    const cameraPos = this.el.sceneEl.camera.getWorldPosition(new THREE.Vector3());
+    const toCamera = new THREE.Vector3().subVectors(cameraPos, startPos).normalize();
+    
+    startPos.addScaledVector(toCamera, 0.6); // 60cm devant l'impact (augmenté pour être sûr)
+    startPos.y += 0.2; // Un peu plus haut
+    
+    feedback.setAttribute('position', `${startPos.x} ${startPos.y} ${startPos.z}`);
+    
+    // Couleurs plus visibles selon la zone
+    let color, scale;
+    if (zone === 'bullseye') {
+      color = '#FFD700'; // Or brillant
+      scale = 4.0;
+    } else if (zone === 'middle') {
+      color = '#FF4500'; // Rouge-orange vif
+      scale = 3.5;
+    } else if (zone === 'outer') {
+      color = '#00FF88'; // Vert menthe vif
+      scale = 3.0;
+    } else {
+      color = '#FFFFFF'; // Blanc pur
+      scale = 2.5;
+    }
+    
+    feedback.setAttribute('value', `+${points}`);
+    feedback.setAttribute('align', 'center');
+    feedback.setAttribute('color', color);
+    feedback.setAttribute('width', '3'); // Largeur canvas augmentée pour netteté
+    feedback.setAttribute('scale', `${scale} ${scale} ${scale}`);
+    feedback.setAttribute('font-weight', 'bold');
+    feedback.setAttribute('look-at', '[camera]');
+    feedback.setAttribute('side', 'double'); // Visible des deux côtés
+    
+    // Animation via A-Frame (plus fiable que requestAnimationFrame)
+    // 1. Montée
+    feedback.setAttribute('animation__rise', {
+      property: 'position',
+      to: `${startPos.x} ${startPos.y + 0.8} ${startPos.z}`,
+      dur: 1500,
+      easing: 'easeOutQuad'
+    });
+    
+    // 2. Transparence (fade out)
+    feedback.setAttribute('animation__fade', {
+      property: 'opacity',
+      from: 1,
+      to: 0,
+      dur: 1000,
+      delay: 500, // Commence à disparaître après 0.5s
+      easing: 'easeInQuad'
+    });
+    
+    // Auto-remove à la fin de l'animation
+    feedback.addEventListener('animationcomplete__rise', () => {
+      safeRemove(feedback);
+    });
+    
+    this.el.sceneEl.appendChild(feedback);
   },
 
   destroy(lastPoints) {

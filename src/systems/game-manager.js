@@ -18,8 +18,8 @@ const _tempObj = new THREE.Object3D();
 // Difficulty presets
 const DIFFICULTY = Object.freeze({
   easy:   { points: 10, hp: 1 },
-  normal: { points: 15, hpChance: 0.7 },
-  hard:   { points: 20, maxHp: 3 },
+  normal: { points: 10, hpChance: 0.7 },
+  hard:   { points: 10, maxHp: 3 },
 });
 
 const VERTICAL_BONUS = 1.2;
@@ -283,9 +283,14 @@ AFRAME.registerSystem('game-manager', {
     const scale = 0.2 + Math.random() * 0.3;
     let { points, hp } = this.getDifficultyValues();
 
-    if (spawnData.surfaceType === 'vertical') {
-      points = Math.floor(points * VERTICAL_BONUS);
-    }
+    // NOTE: Le système de points est maintenant fixe (10/20/30) peu importe la taille
+    // Le challenge vient de la visée plus difficile sur les petites cibles
+    // const sizeMultiplier = 0.35 / scale;
+    // points = Math.floor(points * sizeMultiplier);
+
+    // if (spawnData.surfaceType === 'vertical') {
+    //  points = Math.floor(points * VERTICAL_BONUS);
+    // }
 
     // Create target entity
     const target = document.createElement('a-entity');
