@@ -1,51 +1,50 @@
 /**
  * Composant webxr-anchor-manager pour A-Frame
- * Gère le cycle de vie des anchors WebXR
+ * Gestion du cycle de vie des anchors WebXR
  */
 
-AFRAME.registerComponent("webxr-anchor-manager", {
+import { clearTimer } from '../utils.js';
+
+AFRAME.registerComponent('webxr-anchor-manager', {
   schema: {
-    maxAnchors: { type: "number", default: 30 },
-    autoCleanup: { type: "boolean", default: true },
-    cleanupInterval: { type: "number", default: 5000 },
+    maxAnchors: { type: 'number', default: 30 },
+    autoCleanup: { type: 'boolean', default: true },
+    cleanupInterval: { type: 'number', default: 5000 },
   },
 
-  init: function () {
+  init() {
     this.anchors = new Map();
     this.anchoredEntities = new Map();
     this.sceneMeshHandler = null;
     this.cleanupTimer = null;
 
-    this.el.sceneEl.addEventListener("enter-vr", () => this.onEnterVR());
-    this.el.sceneEl.addEventListener("exit-vr", () => this.onExitVR());
+    const { sceneEl } = this.el;
+    sceneEl.addEventListener('enter-vr', () => this.onEnterVR());
+    sceneEl.addEventListener('exit-vr', () => this.onExitVR());
 
-    console.log("⚓ Anchor Manager initialisé");
+    console.log('⚓ Anchor Manager initialisé');
   },
 
-  onEnterVR: function () {
-    const sceneMeshEntity = this.el.sceneEl.querySelector("[scene-mesh-handler]");
-    if (sceneMeshEntity && sceneMeshEntity.components["scene-mesh-handler"]) {
-      this.sceneMeshHandler = sceneMeshEntity.components["scene-mesh-handler"];
-      console.log("✅ Anchor Manager connecté au Scene Mesh Handler");
+  onEnterVR() {
+    const { sceneEl } = this.el;
+    const sceneMeshEntity = sceneEl.querySelector('[scene-mesh-handler]');
+    this.sceneMeshHandler = sceneMeshEntity?.components['scene-mesh-handler'] ?? null;
+
+    if (this.sceneMeshHandler) {
+      console.log('✅ Anchor Manager connecté au Scene Mesh Handler');
     }
 
-    if (this.data.autoCleanup) {
-      this.startAutoCleanup();
-    }
-
-    this.el.sceneEl.emit("anchor-manager-ready");
+    if (this.data.autoCleanup) this.startAutoCleanup();
+    sceneEl.emit('anchor-manager-ready');
   },
 
-  onExitVR: function () {
+  onExitVR() {
     this.cleanup();
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
-    console.log("👋 Anchor Manager nettoyé");
+    this.cleanupTimer = clearTimer(this.cleanupTimer, 'interval');
+    console.log('👋 Anchor Manager nettoyé');
   },
 
-  createAnchor: async function (pose) {
+  async createAnchor(pose) {
     if (!this.sceneMeshHandler) return null;
 
     if (this.anchors.size >= this.data.maxAnchors) {
@@ -54,15 +53,11 @@ AFRAME.registerComponent("webxr-anchor-manager", {
     }
 
     let xrPose = pose;
-    if (pose && pose.position && pose.quaternion) {
+    if (pose?.position && pose?.quaternion) {
+      const { position: p, quaternion: q } = pose;
       xrPose = new XRRigidTransform(
-        { x: pose.position.x, y: pose.position.y, z: pose.position.z },
-        {
-          x: pose.quaternion.x,
-          y: pose.quaternion.y,
-          z: pose.quaternion.z,
-          w: pose.quaternion.w,
-        },
+        { x: p.x, y: p.y, z: p.z },
+        { x: q.x, y: q.y, z: q.z, w: q.w },
       );
     }
 
@@ -73,30 +68,26 @@ AFRAME.registerComponent("webxr-anchor-manager", {
     anchor.id = anchorId;
     this.anchors.set(anchorId, anchor);
 
-    this.el.sceneEl.emit("anchor-created", { anchorId, position: pose.position, quaternion: pose.quaternion });
-
+    const { position, quaternion } = pose;
+    this.el.sceneEl.emit('anchor-created', { anchorId, position, quaternion });
     return anchorId;
   },
 
-  attachToAnchor: function (entity, anchorId) {
+  attachToAnchor(entity, anchorId) {
     if (!this.anchors.has(anchorId)) return false;
 
     const entityId = entity.id || `entity-${Date.now()}`;
     entity.id = entityId;
-
-    entity.setAttribute("data-anchor-id", anchorId);
+    entity.setAttribute('data-anchor-id', anchorId);
     this.anchoredEntities.set(entityId, anchorId);
 
     const anchor = this.anchors.get(anchorId);
-    if (anchor) {
-      this.updateEntityFromAnchor(entity, anchor);
-    }
-
+    if (anchor) this.updateEntityFromAnchor(entity, anchor);
     return true;
   },
 
-  updateEntityFromAnchor: function (entity, anchor) {
-    if (!anchor || !anchor.anchorSpace) return false;
+  updateEntityFromAnchor(entity, anchor) {
+    if (!anchor?.anchorSpace) return false;
 
     const frame = this.el.sceneEl.frame;
     if (!frame) return false;
@@ -107,58 +98,48 @@ AFRAME.registerComponent("webxr-anchor-manager", {
     const anchorPose = frame.getPose(anchor.anchorSpace, xrRefSpace);
     if (!anchorPose) return false;
 
-    const pos = anchorPose.transform.position;
-    const quat = anchorPose.transform.orientation;
+    const { position: pos, orientation: quat } = anchorPose.transform;
     entity.object3D.position.set(pos.x, pos.y, pos.z);
     entity.object3D.quaternion.set(quat.x, quat.y, quat.z, quat.w);
     return true;
   },
 
-  deleteAnchor: function (anchorId) {
+  deleteAnchor(anchorId) {
     const anchor = this.anchors.get(anchorId);
     if (!anchor) return false;
 
-    if (this.sceneMeshHandler) {
-      this.sceneMeshHandler.deleteAnchor(anchor);
-    }
-
+    this.sceneMeshHandler?.deleteAnchor(anchor);
     this.anchors.delete(anchorId);
+
     for (const [entityId, aId] of this.anchoredEntities.entries()) {
       if (aId === anchorId) {
-        const entity = document.getElementById(entityId);
-        if (entity) entity.removeAttribute("data-anchor-id");
+        document.getElementById(entityId)?.removeAttribute('data-anchor-id');
         this.anchoredEntities.delete(entityId);
       }
     }
-
     return true;
   },
 
-  startAutoCleanup: function () {
+  startAutoCleanup() {
     this.cleanupTimer = setInterval(() => {
       for (const [entityId] of this.anchoredEntities.entries()) {
-        const entity = document.getElementById(entityId);
-        if (!entity) {
-          this.anchoredEntities.delete(entityId);
-        }
+        if (!document.getElementById(entityId)) this.anchoredEntities.delete(entityId);
       }
     }, this.data.cleanupInterval);
   },
 
-  cleanup: function () {
+  cleanup() {
     for (const [anchorId, anchor] of this.anchors.entries()) {
-      if (this.sceneMeshHandler) {
-        this.sceneMeshHandler.deleteAnchor(anchor);
-      }
+      this.sceneMeshHandler?.deleteAnchor(anchor);
       this.anchors.delete(anchorId);
     }
     this.anchoredEntities.clear();
   },
 
-  tick: function () {
+  tick() {
     if (!this.sceneMeshHandler || this.anchoredEntities.size === 0) return;
 
-    const frame = this.el.sceneEl.frame;
+    const { frame } = this.el.sceneEl;
     if (!frame) return;
 
     for (const [entityId, anchorId] of this.anchoredEntities.entries()) {

@@ -4,73 +4,75 @@
  * Priorise les surfaces réelles issues du hit-test
  */
 
-AFRAME.registerComponent("surface-detector", {
+import { clearTimer } from '../utils.js';
+
+// Module-level reused THREE objects (perf: avoid allocations in hot paths)
+const _worldPos = new THREE.Vector3();
+const _worldQuat = new THREE.Quaternion();
+const _normal = new THREE.Vector3();
+const _cameraPos = new THREE.Vector3();
+const _perpendicular = new THREE.Vector3();
+const _tempObj = new THREE.Object3D();
+const _defaultUp = new THREE.Vector3(0, 1, 0);
+const _defaultForward = new THREE.Vector3(0, 0, 1);
+const _negZ = new THREE.Vector3(0, 0, -1);
+
+const STABILITY_EXPIRY_MS = 3000;
+
+AFRAME.registerComponent('surface-detector', {
   schema: {
-    enabled: { type: "boolean", default: true },
-    debugMode: { type: "boolean", default: false },
-    defaultTargetHeight: { type: "number", default: 0.5 },
-    maxDistance: { type: "number", default: 10 },
-    minSurfaceArea: { type: "number", default: 0.25 },
-    stabilityFrames: { type: "number", default: 3 },
-    allowFallback: { type: "boolean", default: false },
-    visualizeSurfaces: { type: "boolean", default: false },
+    enabled: { type: 'boolean', default: true },
+    debugMode: { type: 'boolean', default: false },
+    defaultTargetHeight: { type: 'number', default: 0.5 },
+    maxDistance: { type: 'number', default: 10 },
+    minSurfaceArea: { type: 'number', default: 0.25 },
+    stabilityFrames: { type: 'number', default: 3 },
+    allowFallback: { type: 'boolean', default: false },
+    visualizeSurfaces: { type: 'boolean', default: false },
   },
 
-  init: function () {
+  init() {
     this.surfaces = { horizontal: [], vertical: [] };
     this.surfaceHistory = new Map();
     this.realSurfaceMap = new Map();
     this.realSurfacesEnabled = false;
     this.pendingDetect = null;
 
-    this.el.sceneEl.addEventListener("surface-detected", (evt) => {
+    const { sceneEl } = this.el;
+
+    sceneEl.addEventListener('surface-detected', (evt) => {
       this.onRealSurfaceDetected(evt.detail);
     });
 
-    this.el.sceneEl.addEventListener("scene-mesh-handler-ready", () => {
+    sceneEl.addEventListener('scene-mesh-handler-ready', () => {
       this.realSurfacesEnabled = true;
     });
 
-    if (this.el.sceneEl.hasLoaded) {
+    if (sceneEl.hasLoaded) {
       this.initializeSurfaceDetection();
     } else {
-      this.el.sceneEl.addEventListener("loaded", () => {
+      sceneEl.addEventListener('loaded', () => {
         this.initializeSurfaceDetection();
       });
     }
 
-    console.log("🔍 Surface Detector initialisé");
+    console.log('🔍 Surface Detector initialisé');
   },
 
-  initializeSurfaceDetection: function () {
+  initializeSurfaceDetection() {
     this.detectSurfaces();
   },
 
-  onRealSurfaceDetected: function (surfaceData) {
+  onRealSurfaceDetected(surfaceData) {
     if (!this.data.enabled || !surfaceData) return;
 
     const key = this.getSurfaceKey(surfaceData.position);
-    const position = new THREE.Vector3(
-      surfaceData.position.x,
-      surfaceData.position.y,
-      surfaceData.position.z,
-    );
-    const quaternion = new THREE.Quaternion(
-      surfaceData.quaternion.x,
-      surfaceData.quaternion.y,
-      surfaceData.quaternion.z,
-      surfaceData.quaternion.w,
-    );
-    const normal = new THREE.Vector3(
-      surfaceData.normal.x,
-      surfaceData.normal.y,
-      surfaceData.normal.z,
-    ).normalize();
+    const position = new THREE.Vector3(surfaceData.position.x, surfaceData.position.y, surfaceData.position.z);
+    const quaternion = new THREE.Quaternion(surfaceData.quaternion.x, surfaceData.quaternion.y, surfaceData.quaternion.z, surfaceData.quaternion.w);
+    const normal = new THREE.Vector3(surfaceData.normal.x, surfaceData.normal.y, surfaceData.normal.z).normalize();
 
     const surface = {
-      position,
-      quaternion,
-      normal,
+      position, quaternion, normal,
       width: surfaceData.width || 1,
       height: surfaceData.height || 1,
       isRealSurface: true,
@@ -88,13 +90,14 @@ AFRAME.registerComponent("surface-detector", {
     }
   },
 
-  detectSurfaces: function () {
+  detectSurfaces() {
     if (!this.data.enabled) return;
 
     this.surfaces.horizontal = [];
     this.surfaces.vertical = [];
 
     let realCount = 0;
+
     if (this.realSurfacesEnabled && this.realSurfaceMap.size > 0) {
       for (const surface of this.realSurfaceMap.values()) {
         const classified = this.classifySurface(surface);
@@ -108,205 +111,165 @@ AFRAME.registerComponent("surface-detector", {
     if (this.data.allowFallback) {
       this.el.sceneEl.object3D.traverse((object) => {
         const el = object.el;
-        if (!el || !el.getAttribute) return;
+        if (!el?.getAttribute || !el.classList.contains('scene-mesh')) return;
 
-        if (!el.classList.contains("scene-mesh")) return;
+        const geometry = el.getAttribute('geometry') || {};
+        const width = el.getAttribute('width') || geometry.width || 1;
+        const height = el.getAttribute('height') || geometry.height || 1;
 
-        const geometry = el.getAttribute("geometry") || {};
-        const width = el.getAttribute("width") || geometry.width || 1;
-        const height = el.getAttribute("height") || geometry.height || 1;
-
-        const worldPos = new THREE.Vector3();
-        const worldQuat = new THREE.Quaternion();
-        el.object3D.getWorldPosition(worldPos);
-        el.object3D.getWorldQuaternion(worldQuat);
-
-        const normal = new THREE.Vector3(0, 0, 1)
-          .applyQuaternion(worldQuat)
-          .normalize();
+        el.object3D.getWorldPosition(_worldPos);
+        el.object3D.getWorldQuaternion(_worldQuat);
+        _normal.copy(_defaultForward).applyQuaternion(_worldQuat).normalize();
 
         const surface = {
-          position: worldPos,
-          quaternion: worldQuat,
-          normal,
-          width,
-          height,
+          position: _worldPos.clone(),
+          quaternion: _worldQuat.clone(),
+          normal: _normal.clone(),
+          width, height,
           isRealSurface: false,
           stability: 0,
         };
 
         const classified = this.classifySurface(surface);
-        if (classified) {
-          this.surfaces[classified.type].push(classified);
-        }
+        if (classified) this.surfaces[classified.type].push(classified);
       });
     }
 
-    this.el.sceneEl.emit("surfaces-detected", {
-      horizontal: this.surfaces.horizontal.length,
-      vertical: this.surfaces.vertical.length,
+    const { horizontal, vertical } = this.surfaces;
+    this.el.sceneEl.emit('surfaces-detected', {
+      horizontal: horizontal.length,
+      vertical: vertical.length,
       real: realCount,
       hitTest: realCount,
       mesh: 0,
-      mock:
-        this.surfaces.horizontal.length +
-        this.surfaces.vertical.length -
-        realCount,
+      mock: horizontal.length + vertical.length - realCount,
     });
   },
 
-  classifySurface: function (surface) {
-    const normal = surface.normal.clone().normalize();
-    const isHorizontal = Math.abs(normal.y) > 0.7;
-    const type = isHorizontal ? "horizontal" : "vertical";
+  classifySurface(surface) {
+    _normal.copy(surface.normal).normalize();
+    const type = Math.abs(_normal.y) > 0.7 ? 'horizontal' : 'vertical';
 
-    const cameraPos = this.el.sceneEl.camera
-      ? this.el.sceneEl.camera.getWorldPosition(new THREE.Vector3())
-      : new THREE.Vector3(0, 1.6, 0);
+    const camera = this.el.sceneEl.camera;
+    const cameraPos = camera
+      ? camera.getWorldPosition(_cameraPos)
+      : _cameraPos.set(0, 1.6, 0);
 
-    const validation = this.validateSurface(surface, cameraPos);
-    if (!validation.valid) {
-      return null;
-    }
+    if (!this.validateSurface(surface, cameraPos)) return null;
 
     return {
       ...surface,
       type,
-      outwardNormal: normal,
+      outwardNormal: _normal.clone(),
       worldPosition: surface.position,
       worldQuaternion: surface.quaternion,
     };
   },
 
-  validateSurface: function (surface, cameraPos) {
-    const distance = cameraPos.distanceTo(surface.position);
-    if (distance > this.data.maxDistance) {
-      return { valid: false, reason: "distance" };
+  validateSurface(surface, cameraPos) {
+    const { maxDistance, minSurfaceArea, stabilityFrames } = this.data;
+
+    if (cameraPos.distanceTo(surface.position) > maxDistance) return false;
+
+    const area = (surface.width || 1) * (surface.height || 1);
+    if (area < minSurfaceArea) return false;
+
+    if (surface.isRealSurface) {
+      const key = this.getSurfaceKey(surface.position);
+      if (this.getSurfaceStability(key) < stabilityFrames) return false;
     }
 
-    const width = surface.width || 1;
-    const height = surface.height || 1;
-    const area = width * height;
-    if (area < this.data.minSurfaceArea) {
-      return { valid: false, reason: "area" };
-    }
-
-    const key = this.getSurfaceKey(surface.position);
-    const stability = this.getSurfaceStability(key);
-    if (surface.isRealSurface && stability < this.data.stabilityFrames) {
-      return { valid: false, reason: "stability" };
-    }
-
-    return { valid: true };
+    return true;
   },
 
-  updateSurfaceStability: function (key, surface) {
+  updateSurfaceStability(key, surface) {
     const now = Date.now();
-    if (!this.surfaceHistory.has(key)) {
-      this.surfaceHistory.set(key, {
-        count: 1,
-        lastSeen: now,
-        surface,
-      });
+    const existing = this.surfaceHistory.get(key);
+
+    if (existing) {
+      existing.count += 1;
+      existing.lastSeen = now;
+      existing.surface = surface;
     } else {
-      const entry = this.surfaceHistory.get(key);
-      entry.count += 1;
-      entry.lastSeen = now;
-      entry.surface = surface;
+      this.surfaceHistory.set(key, { count: 1, lastSeen: now, surface });
     }
 
-    for (const [k, entry] of this.surfaceHistory.entries()) {
-      if (now - entry.lastSeen > 3000) {
-        this.surfaceHistory.delete(k);
-      }
+    // Purge expired entries
+    for (const [k, entry] of this.surfaceHistory) {
+      if (now - entry.lastSeen > STABILITY_EXPIRY_MS) this.surfaceHistory.delete(k);
     }
   },
 
-  getSurfaceStability: function (key) {
-    const entry = this.surfaceHistory.get(key);
-    return entry ? entry.count : 0;
+  getSurfaceStability(key) {
+    return this.surfaceHistory.get(key)?.count ?? 0;
   },
 
-  getSurfaceKey: function (position) {
+  getSurfaceKey(position) {
     return `${Math.round(position.x * 10)}-${Math.round(position.y * 10)}-${Math.round(position.z * 10)}`;
   },
 
-  getRandomSpawnPoint: function () {
-    const total =
-      this.surfaces.horizontal.length + this.surfaces.vertical.length;
+  getRandomSpawnPoint() {
+    const { horizontal, vertical } = this.surfaces;
+    const total = horizontal.length + vertical.length;
     if (total === 0) return null;
 
-    const useHorizontal =
-      Math.random() < this.surfaces.horizontal.length / total;
-
-    return useHorizontal
+    return Math.random() < horizontal.length / total
       ? this.getRandomHorizontalSpawnPoint()
       : this.getRandomVerticalSpawnPoint();
   },
 
-  getRandomHorizontalSpawnPoint: function () {
-    if (this.surfaces.horizontal.length === 0) return null;
+  getRandomHorizontalSpawnPoint() {
+    const { horizontal } = this.surfaces;
+    if (horizontal.length === 0) return null;
 
-    const surface = this.surfaces.horizontal[0];
-    const normal = surface.outwardNormal || new THREE.Vector3(0, 1, 0);
+    const surface = horizontal[0];
+    const normal = surface.outwardNormal || _defaultUp.clone();
     const position = surface.position.clone();
 
-    const offsetX = (Math.random() - 0.5) * (surface.width || 2) * 0.6;
-    const offsetZ = (Math.random() - 0.5) * (surface.height || 2) * 0.6;
-    position.x += offsetX;
-    position.z += offsetZ;
+    position.x += (Math.random() - 0.5) * (surface.width || 2) * 0.6;
+    position.z += (Math.random() - 0.5) * (surface.height || 2) * 0.6;
 
     const isCeiling = normal.y < -0.5;
     if (isCeiling) {
-      position.add(normal.clone().multiplyScalar(0.5));
+      position.addScaledVector(normal, 0.5);
     } else {
       position.y += this.data.defaultTargetHeight;
     }
 
     const camera = this.el.sceneEl.camera;
-    const cameraPos = camera
-      ? camera.getWorldPosition(new THREE.Vector3())
-      : new THREE.Vector3(0, 1.6, 0);
+    const cameraPos = camera ? camera.getWorldPosition(_cameraPos) : _cameraPos.set(0, 1.6, 0);
 
-    const tempObj = new THREE.Object3D();
-    tempObj.position.copy(position);
-    tempObj.lookAt(cameraPos);
+    _tempObj.position.copy(position);
+    _tempObj.lookAt(cameraPos);
 
     return {
       position,
-      rotation: {
-        x: 0,
-        y: THREE.MathUtils.radToDeg(tempObj.rotation.y),
-        z: 0,
-      },
-      surfaceType: "horizontal",
-      isRealSurface: surface.isRealSurface || false,
-      stability: surface.stability || 0,
+      rotation: { x: 0, y: THREE.MathUtils.radToDeg(_tempObj.rotation.y), z: 0 },
+      surfaceType: 'horizontal',
+      isRealSurface: surface.isRealSurface ?? false,
+      stability: surface.stability ?? 0,
       normal,
     };
   },
 
-  getRandomVerticalSpawnPoint: function () {
-    if (this.surfaces.vertical.length === 0) return null;
+  getRandomVerticalSpawnPoint() {
+    const { vertical } = this.surfaces;
+    if (vertical.length === 0) return null;
 
-    const surface = this.surfaces.vertical[0];
-    const normal = surface.outwardNormal || new THREE.Vector3(0, 0, 1);
+    const surface = vertical[0];
+    const normal = surface.outwardNormal || _defaultForward.clone();
     const position = surface.position.clone();
 
     const offsetY = (Math.random() - 0.5) * (surface.height || 2) * 0.6;
     const offsetX = (Math.random() - 0.5) * (surface.width || 2) * 0.6;
 
-    const perpendicular = new THREE.Vector3(-normal.z, 0, normal.x).normalize();
-    position.add(perpendicular.multiplyScalar(offsetX));
+    _perpendicular.set(-normal.z, 0, normal.x).normalize();
+    position.addScaledVector(_perpendicular, offsetX);
     position.y += offsetY;
+    position.addScaledVector(normal, 0.2);
 
-    position.add(normal.clone().multiplyScalar(0.2));
-
-    const qAlign = new THREE.Quaternion().setFromUnitVectors(
-      new THREE.Vector3(0, 0, -1),
-      normal.clone().normalize(),
-    );
-    const eAlign = new THREE.Euler().setFromQuaternion(qAlign, "XYZ");
+    const qAlign = new THREE.Quaternion().setFromUnitVectors(_negZ, _normal.copy(normal).normalize());
+    const eAlign = new THREE.Euler().setFromQuaternion(qAlign, 'XYZ');
 
     return {
       position,
@@ -315,9 +278,9 @@ AFRAME.registerComponent("surface-detector", {
         y: THREE.MathUtils.radToDeg(eAlign.y),
         z: THREE.MathUtils.radToDeg(eAlign.z),
       },
-      surfaceType: "vertical",
-      isRealSurface: surface.isRealSurface || false,
-      stability: surface.stability || 0,
+      surfaceType: 'vertical',
+      isRealSurface: surface.isRealSurface ?? false,
+      stability: surface.stability ?? 0,
       normal,
     };
   },

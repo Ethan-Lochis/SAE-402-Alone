@@ -1,247 +1,165 @@
 /**
- * Composant vr-menu pour A-Frame
- * Affiche un panneau flottant avec les instructions du jeu
- * et un bouton pour démarrer la partie
- * Style médiéval
+ * Composant vr-menu
+ * Menu de demarrage VR medieval avec interaction par fleche
+ * Panneau flottant avec titre, sections et bouton cible pulsant
  */
 
-AFRAME.registerComponent("vr-menu", {
-  init: function () {
-    this.isVisible = true;
+import { MEDIEVAL_COLORS, createPanel, createText, safeRemove } from '../utils.js';
 
-    // Créer le panneau de menu
+const HIT_RADIUS = 0.5;
+const HIDE_DURATION = 300;
+const REMOVE_DELAY = 350;
+
+AFRAME.registerComponent('vr-menu', {
+  init() {
+    this.isVisible = true;
+    this.playButton = null;
+    this.playButtonWorldPos = new THREE.Vector3();
+
     this.createMenuPanel();
 
-    // Écouter l'événement de démarrage du jeu
-    this.el.sceneEl.addEventListener("start-game", () => {
-      this.hideMenu();
-    });
+    this.el.sceneEl?.addEventListener('start-game', () => this.hideMenu());
 
-    console.log("📋 VR Menu initialisé");
+    console.log('📋 VR Menu initialise');
   },
 
-  createMenuPanel: function () {
+  createMenuPanel() {
     const menu = this.el;
+    menu.setAttribute('position', '0 1.5 -2.5');
+    menu.setAttribute('rotation', '0 0 0');
 
-    // Positionner le menu devant le joueur
-    menu.setAttribute("position", "0 1.5 -2.5");
-    menu.setAttribute("rotation", "0 0 0");
+    const { gold, darkWood, parchment } = MEDIEVAL_COLORS;
 
-    // Couleurs médiévales
-    const COLORS = {
-      darkWood: "#2d1b0e",
-      lightWood: "#4a3728",
-      gold: "#d4af37",
-      parchment: "#f4e4bc",
-      darkRed: "#8b0000",
-    };
+    // Bordure doree
+    menu.appendChild(createPanel({
+      width: 1.5, height: 1.7, color: gold, position: '0 0 -0.002',
+    }));
 
-    // Bordure dorée extérieure
-    const borderOuter = document.createElement("a-entity");
-    borderOuter.setAttribute("geometry", {
-      primitive: "plane",
-      width: 1.5,
-      height: 1.7,
-    });
-    borderOuter.setAttribute("material", {
-      color: COLORS.gold,
-      opacity: 1,
-      shader: "flat",
-    });
-    borderOuter.setAttribute("position", "0 0 -0.002");
-    menu.appendChild(borderOuter);
+    // Fond bois sombre
+    menu.appendChild(createPanel({
+      width: 1.44, height: 1.64, color: darkWood, opacity: 0.98, position: '0 0 -0.001',
+    }));
 
-    // Panneau de bois
-    const panel = document.createElement("a-entity");
-    panel.setAttribute("geometry", {
-      primitive: "plane",
-      width: 1.44,
-      height: 1.64,
-    });
-    panel.setAttribute("material", {
-      color: COLORS.darkWood,
-      opacity: 0.98,
-      shader: "flat",
-    });
-    panel.setAttribute("position", "0 0 -0.001");
-    menu.appendChild(panel);
+    // Parchemin transparent
+    menu.appendChild(createPanel({
+      width: 1.3, height: 1.5, color: parchment, opacity: 0.15, position: '0 0 0',
+    }));
 
-    // Parchemin central
-    const parchment = document.createElement("a-entity");
-    parchment.setAttribute("geometry", {
-      primitive: "plane",
+    // Titre
+    menu.appendChild(createText({
+      value: '⚔️ ARCHERY XR ⚔️',
+      position: '0 0.62 0.01',
+      color: gold,
+      width: 2.2,
+    }));
+
+    // Separateur
+    menu.appendChild(createPanel({
+      width: 1.1, height: 0.015, color: gold, position: '0 0.48 0.01',
+    }));
+
+    // Section Quete
+    menu.appendChild(createText({
+      value: '~ QUETE ~',
+      position: '0 0.35 0.01',
+      color: gold,
+      width: 1.6,
+    }));
+    menu.appendChild(createText({
+      value: 'Abattez les cibles avec vos\nfleches pour gagner des points !',
+      position: '0 0.2 0.01',
+      color: '#ddd',
       width: 1.3,
-      height: 1.5,
-    });
-    parchment.setAttribute("material", {
-      color: COLORS.parchment,
-      opacity: 0.15,
-      shader: "flat",
-    });
-    parchment.setAttribute("position", "0 0 0");
-    menu.appendChild(parchment);
+    }));
 
-    // Titre avec style médiéval
-    const title = document.createElement("a-text");
-    title.setAttribute("value", "⚔️ ARCHERY XR ⚔️");
-    title.setAttribute("position", "0 0.62 0.01");
-    title.setAttribute("align", "center");
-    title.setAttribute("color", COLORS.gold);
-    title.setAttribute("width", "2.2");
-    menu.appendChild(title);
+    // Section Controles
+    menu.appendChild(createText({
+      value: '~ CONTROLES ~',
+      position: '0 0.02 0.01',
+      color: gold,
+      width: 1.6,
+    }));
+    menu.appendChild(createText({
+      value: 'Main gauche : Arc\nMain droite : Tirer (Gachette)',
+      position: '0 -0.12 0.01',
+      color: '#ddd',
+      width: 1.3,
+    }));
 
-    // Ligne décorative sous le titre
-    const separator = document.createElement("a-entity");
-    separator.setAttribute("geometry", {
-      primitive: "plane",
-      width: 1.1,
-      height: 0.015,
-    });
-    separator.setAttribute("material", {
-      color: COLORS.gold,
-      shader: "flat",
-    });
-    separator.setAttribute("position", "0 0.48 0.01");
-    menu.appendChild(separator);
+    // Section Recompenses
+    menu.appendChild(createText({
+      value: '~ RECOMPENSES ~',
+      position: '0 -0.28 0.01',
+      color: gold,
+      width: 1.6,
+    }));
+    menu.appendChild(createText({
+      value: 'Centre : x3  |  Milieu : x2  |  Bord : x1',
+      position: '0 -0.4 0.01',
+      color: '#ddd',
+      width: 1.3,
+    }));
 
-    // Section QUÊTE
-    const objectifTitle = document.createElement("a-text");
-    objectifTitle.setAttribute("value", "~ QUETE ~");
-    objectifTitle.setAttribute("position", "0 0.35 0.01");
-    objectifTitle.setAttribute("align", "center");
-    objectifTitle.setAttribute("color", COLORS.gold);
-    objectifTitle.setAttribute("width", "1.6");
-    menu.appendChild(objectifTitle);
-
-    const objectifText = document.createElement("a-text");
-    objectifText.setAttribute(
-      "value",
-      "Abattez les cibles avec vos\nfleches pour gagner des points !",
-    );
-    objectifText.setAttribute("position", "0 0.2 0.01");
-    objectifText.setAttribute("align", "center");
-    objectifText.setAttribute("color", "#ddd");
-    objectifText.setAttribute("width", "1.3");
-    menu.appendChild(objectifText);
-
-    // Section CONTROLES
-    const controlesTitle = document.createElement("a-text");
-    controlesTitle.setAttribute("value", "~ CONTROLES ~");
-    controlesTitle.setAttribute("position", "0 0.02 0.01");
-    controlesTitle.setAttribute("align", "center");
-    controlesTitle.setAttribute("color", COLORS.gold);
-    controlesTitle.setAttribute("width", "1.6");
-    menu.appendChild(controlesTitle);
-
-    const controlesText = document.createElement("a-text");
-    controlesText.setAttribute(
-      "value",
-      "Main gauche : Arc\nMain droite : Tirer (Gachette)",
-    );
-    controlesText.setAttribute("position", "0 -0.12 0.01");
-    controlesText.setAttribute("align", "center");
-    controlesText.setAttribute("color", "#ddd");
-    controlesText.setAttribute("width", "1.3");
-    menu.appendChild(controlesText);
-
-    // Section SCORING
-    const scoringTitle = document.createElement("a-text");
-    scoringTitle.setAttribute("value", "~ RECOMPENSES ~");
-    scoringTitle.setAttribute("position", "0 -0.28 0.01");
-    scoringTitle.setAttribute("align", "center");
-    scoringTitle.setAttribute("color", COLORS.gold);
-    scoringTitle.setAttribute("width", "1.6");
-    menu.appendChild(scoringTitle);
-
-    const scoringText = document.createElement("a-text");
-    scoringText.setAttribute(
-      "value",
-      "Centre : x3  |  Milieu : x2  |  Bord : x1",
-    );
-    scoringText.setAttribute("position", "0 -0.4 0.01");
-    scoringText.setAttribute("align", "center");
-    scoringText.setAttribute("color", "#ddd");
-    scoringText.setAttribute("width", "1.3");
-    menu.appendChild(scoringText);
-
-    // Bouton cible pour démarrer
-    this.createPlayButton(menu, COLORS);
+    this.createPlayButton(menu);
   },
 
-  createPlayButton: function (menu, COLORS) {
-    // Conteneur du bouton-cible
-    const buttonContainer = document.createElement("a-entity");
-    buttonContainer.setAttribute("position", "0 -0.62 0.05");
-    buttonContainer.id = "play-button";
+  createPlayButton(menu) {
+    const { darkRed, gold } = MEDIEVAL_COLORS;
 
-    // Cible circulaire rouge
-    const target = document.createElement("a-entity");
-    target.setAttribute("geometry", {
-      primitive: "cylinder",
-      radius: 0.18,
-      height: 0.05,
-    });
-    target.setAttribute("material", {
-      color: "#8b0000",
-      shader: "flat",
-    });
-    target.setAttribute("rotation", "90 0 0");
-    target.setAttribute("position", "0 0 0");
+    const buttonContainer = document.createElement('a-entity');
+    buttonContainer.setAttribute('position', '0 -0.62 0.05');
+    buttonContainer.id = 'play-button';
+
+    // Cercle cible rouge
+    const target = document.createElement('a-entity');
+    target.setAttribute('geometry', { primitive: 'cylinder', radius: 0.18, height: 0.05 });
+    target.setAttribute('material', { color: darkRed, shader: 'flat' });
+    target.setAttribute('rotation', '90 0 0');
+    target.setAttribute('position', '0 0 0');
     buttonContainer.appendChild(target);
 
-    // Centre doré
-    const bullseye = document.createElement("a-entity");
-    bullseye.setAttribute("geometry", {
-      primitive: "cylinder",
-      radius: 0.07,
-      height: 0.06,
-    });
-    bullseye.setAttribute("material", {
-      color: COLORS.gold,
-      shader: "flat",
-    });
-    bullseye.setAttribute("rotation", "90 0 0");
-    bullseye.setAttribute("position", "0 0 0.01");
+    // Centre dore (bullseye)
+    const bullseye = document.createElement('a-entity');
+    bullseye.setAttribute('geometry', { primitive: 'cylinder', radius: 0.07, height: 0.06 });
+    bullseye.setAttribute('material', { color: gold, shader: 'flat' });
+    bullseye.setAttribute('rotation', '90 0 0');
+    bullseye.setAttribute('position', '0 0 0.01');
     buttonContainer.appendChild(bullseye);
 
-    // Texte
-    const buttonText = document.createElement("a-text");
-    buttonText.setAttribute("value", "🎯 TIREZ POUR COMMENCER");
-    buttonText.setAttribute("position", "0 -0.28 0");
-    buttonText.setAttribute("align", "center");
-    buttonText.setAttribute("color", COLORS.gold);
-    buttonText.setAttribute("width", "1.6");
-    buttonContainer.appendChild(buttonText);
+    // Texte du bouton
+    buttonContainer.appendChild(createText({
+      value: '🎯 TIREZ POUR COMMENCER',
+      position: '0 -0.28 0',
+      color: gold,
+      width: 1.6,
+    }));
 
     // Animation pulsante
-    target.setAttribute("animation", {
-      property: "scale",
-      from: "1 1 1",
-      to: "1.15 1.15 1.15",
+    target.setAttribute('animation', {
+      property: 'scale',
+      from: '1 1 1',
+      to: '1.15 1.15 1.15',
       dur: 700,
-      dir: "alternate",
+      dir: 'alternate',
       loop: true,
-      easing: "easeInOutSine",
+      easing: 'easeInOutSine',
     });
 
     menu.appendChild(buttonContainer);
 
-    // Stocker la référence pour la détection de collision
     this.playButton = buttonContainer;
-    this.playButtonWorldPos = new THREE.Vector3();
   },
 
-  // Méthode appelée par les flèches
-  checkArrowHit: function (arrowPosition) {
+  checkArrowHit(arrowPosition) {
     if (!this.isVisible || !this.playButton) return false;
 
     this.playButton.object3D.getWorldPosition(this.playButtonWorldPos);
     const distance = arrowPosition.distanceTo(this.playButtonWorldPos);
 
-    console.log(`📍 Distance flèche-bouton: ${distance.toFixed(2)}`);
+    console.log(`📍 Distance fleche-bouton: ${distance.toFixed(2)}`);
 
-    if (distance < 0.5) {
-      console.log("🎯 Bouton touché par une flèche !");
+    if (distance < HIT_RADIUS) {
+      console.log('🎯 Bouton touche par une fleche !');
       this.onPlayClick();
       return true;
     }
@@ -249,40 +167,33 @@ AFRAME.registerComponent("vr-menu", {
     return false;
   },
 
-  onPlayClick: function () {
-    console.log("🎮 Bouton JOUER cliqué !");
-    this.el.sceneEl.emit("start-game");
+  onPlayClick() {
+    console.log('🎮 Bouton JOUER clique !');
+    this.el.sceneEl?.emit('start-game');
     this.hideMenu();
   },
 
-  hideMenu: function () {
+  hideMenu() {
     if (!this.isVisible) return;
-
     this.isVisible = false;
 
-    this.el.setAttribute("animation", {
-      property: "scale",
-      to: "0 0 0",
-      dur: 300,
-      easing: "easeInQuad",
+    this.el.setAttribute('animation', {
+      property: 'scale',
+      to: '0 0 0',
+      dur: HIDE_DURATION,
+      easing: 'easeInQuad',
     });
 
-    setTimeout(() => {
-      if (this.el.parentNode) {
-        this.el.parentNode.removeChild(this.el);
-      }
-    }, 350);
+    setTimeout(() => safeRemove(this.el), REMOVE_DELAY);
 
-    console.log("📋 Menu VR caché");
+    console.log('📋 Menu VR cache');
   },
 
-  showMenu: function () {
+  showMenu() {
     if (this.isVisible) return;
-
     this.isVisible = true;
-    this.el.setAttribute("scale", "1 1 1");
-    this.el.setAttribute("visible", true);
-
-    console.log("📋 Menu VR affiché");
+    this.el.setAttribute('scale', '1 1 1');
+    this.el.setAttribute('visible', true);
+    console.log('📋 Menu VR affiche');
   },
 });

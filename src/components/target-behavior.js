@@ -1,238 +1,206 @@
 /**
- * Composant target-behavior pour A-Frame
- * Gère les HP, le calcul de précision basé sur la distance au centre
- * et les animations de hit/destruction
+ * Composant target-behavior - Cibles avec scoring de precision
+ * 4 zones : bullseye (x3), middle (x2), outer (x1), edge (x0.5)
+ * Systeme de HP, animations de hit/destruction, cibles mobiles
  */
+
+import { playSound, safeRemove, clearTimer } from '../utils.js';
+
+/* Vecteur reutilise pour eviter les allocations dans onArrowHit */
+const _localImpact = new THREE.Vector3();
 
 AFRAME.registerComponent('target-behavior', {
   schema: {
     points: { type: 'number', default: 10 },
     hp: { type: 'number', default: 1 },
     movable: { type: 'boolean', default: false },
-    centerRadius: { type: 'number', default: 0.1 }, // Rayon du centre (bullseye)
-    middleRadius: { type: 'number', default: 0.3 }, // Rayon moyen
-    outerRadius: { type: 'number', default: 0.5 }   // Rayon extérieur
+    centerRadius: { type: 'number', default: 0.1 },
+    middleRadius: { type: 'number', default: 0.3 },
+    outerRadius: { type: 'number', default: 0.5 },
   },
 
-  init: function () {
-    this.currentHp = this.data.hp
-    this.hitCount = 0
-    this.hitByArrows = new Set() // Tracker les flèches qui ont déjà touché cette cible
-    this.surfaceType = this.el.getAttribute('surface-type') || 'random'
-    
-    // Animation de mouvement si activé
+  init() {
+    this.currentHp = this.data.hp;
+    this.hitCount = 0;
+    this.hitByArrows = new Set();
+    this.surfaceType = this.el.getAttribute('surface-type') || 'random';
+    this.moveInterval = null;
+
     if (this.data.movable) {
-      this.setupMovement()
+      this.setupMovement();
     }
 
-    console.log(`🎯 Cible créée: ${this.data.points} points, ${this.data.hp} HP (surface: ${this.surfaceType})`)
+    const { points, hp } = this.data;
+    console.log(`🎯 Cible créée: ${points} points, ${hp} HP (surface: ${this.surfaceType})`);
   },
 
-  /**
-   * Méthode appelée quand une flèche touche la cible
-   * Calcule le score de précision basé sur la distance au centre
-   */
-  onArrowHit: function (arrowEl, impactPoint) {
+  onArrowHit(arrowEl, impactPoint) {
     try {
       if (!impactPoint) {
-        console.error('No impact point provided')
-        return
+        console.error('No impact point provided');
+        return;
       }
 
-      // PROTECTION : Vérifier si cette flèche a déjà touché cette cible
-      const arrowId = arrowEl.id || arrowEl.uuid || arrowEl
+      const arrowId = arrowEl.id || arrowEl.uuid || arrowEl;
       if (this.hitByArrows.has(arrowId)) {
-        console.log('⚠️ Cette flèche a déjà touché cette cible, ignoré')
-        return
+        console.log('⚠️ Cette flèche a déjà touché cette cible, ignoré');
+        return;
       }
-      
-      // Marquer cette flèche comme ayant touché cette cible
-      this.hitByArrows.add(arrowId)
 
-      this.hitCount++
-      this.currentHp--
+      this.hitByArrows.add(arrowId);
+      this.hitCount++;
+      this.currentHp--;
 
-      // Convertir le point d'impact en coordonnées locales de la cible
-      const localImpact = this.el.object3D.worldToLocal(impactPoint.clone())
-      
-      // Calculer la distance au centre (sur le plan XY local)
-      const distanceToCenter = Math.sqrt(
-        localImpact.x * localImpact.x + 
-        localImpact.y * localImpact.y
-      )
+      /* Calcul de precision en coordonnees locales */
+      _localImpact.copy(impactPoint);
+      this.el.object3D.worldToLocal(_localImpact);
 
-      // Calculer le multiplicateur de précision
-      let precisionMultiplier = 1.0
-      let hitZone = 'outer'
-      
-      if (distanceToCenter <= this.data.centerRadius) {
-        precisionMultiplier = 3.0 // Bullseye! x3
-        hitZone = 'bullseye'
-      } else if (distanceToCenter <= this.data.middleRadius) {
-        precisionMultiplier = 2.0 // Zone moyenne x2
-        hitZone = 'middle'
-      } else if (distanceToCenter <= this.data.outerRadius) {
-        precisionMultiplier = 1.0 // Zone extérieure x1
-        hitZone = 'outer'
+      const distanceToCenter = Math.hypot(_localImpact.x, _localImpact.y);
+
+      const { centerRadius, middleRadius, outerRadius, points } = this.data;
+      let precisionMultiplier;
+      let hitZone;
+
+      if (distanceToCenter <= centerRadius) {
+        precisionMultiplier = 3.0;
+        hitZone = 'bullseye';
+      } else if (distanceToCenter <= middleRadius) {
+        precisionMultiplier = 2.0;
+        hitZone = 'middle';
+      } else if (distanceToCenter <= outerRadius) {
+        precisionMultiplier = 1.0;
+        hitZone = 'outer';
       } else {
-        precisionMultiplier = 0.5 // Touché le bord x0.5
-        hitZone = 'edge'
+        precisionMultiplier = 0.5;
+        hitZone = 'edge';
       }
 
-      const finalPoints = Math.floor(this.data.points * precisionMultiplier)
+      const finalPoints = Math.floor(points * precisionMultiplier);
 
-      console.log(`💥 Cible touchée! Zone: ${hitZone} | Distance: ${distanceToCenter.toFixed(3)}m | Points: ${finalPoints} | HP restants: ${this.currentHp}`)
+      console.log(
+        `💥 Cible touchée! Zone: ${hitZone} | Distance: ${distanceToCenter.toFixed(3)}m | Points: ${finalPoints} | HP restants: ${this.currentHp}`,
+      );
 
-      // Jouer le son de hit
+      playSound('hit-sound');
+
+      this.playHitAnimation(hitZone);
+      this.showHitFeedback(_localImpact, finalPoints, hitZone);
+
       try {
-        const hitSound = document.getElementById('hit-sound')
-        if (hitSound) {
-          hitSound.currentTime = 0
-          hitSound.play().catch(e => console.log('Son de hit non disponible:', e))
-        }
-      } catch (e) {
-        console.error('Sound play error:', e)
-      }
-
-      // Animations de feedback
-      this.playHitAnimation(hitZone)
-      this.showHitFeedback(localImpact, finalPoints, hitZone)
-
-      // Émettre un événement de score au système de jeu
-      try {
-        console.log(`🎯 [TARGET] Émission événement target-hit avec ${finalPoints} points`)
+        console.log(`🎯 [TARGET] Émission événement target-hit avec ${finalPoints} points`);
         this.el.sceneEl.emit('target-hit', {
           points: finalPoints,
           zone: hitZone,
           multiplier: precisionMultiplier,
           position: this.el.object3D.position,
-          distanceToCenter: distanceToCenter,
-          surfaceType: this.surfaceType
-        })
-        console.log(`✅ [TARGET] Événement target-hit émis avec succès`)
+          distanceToCenter,
+          surfaceType: this.surfaceType,
+        });
+        console.log('✅ [TARGET] Événement target-hit émis avec succès');
       } catch (e) {
-        console.error('❌ [TARGET] Event emission error:', e)
+        console.error('❌ [TARGET] Event emission error:', e);
       }
 
-      // Détruire la cible si HP = 0
       if (this.currentHp <= 0) {
-        this.destroy(finalPoints)
+        this.destroy(finalPoints);
       }
     } catch (e) {
-      console.error('onArrowHit error:', e)
+      console.error('onArrowHit error:', e);
     }
   },
 
-  playHitAnimation: function (zone) {
-    // Animation simplifiée
+  playHitAnimation(zone) {
     try {
-      const originalScale = this.el.getAttribute('scale')
-      const scale = zone === 'bullseye' ? 1.3 : zone === 'middle' ? 1.2 : 1.1
-      
+      const originalScale = this.el.getAttribute('scale');
+      const bump = zone === 'bullseye' ? 1.3 : zone === 'middle' ? 1.2 : 1.1;
+
       this.el.setAttribute('scale', {
-        x: originalScale.x * scale,
-        y: originalScale.y * scale,
-        z: originalScale.z * scale
-      })
-      
-      // Revenir à l'échelle originale après 150ms
+        x: originalScale.x * bump,
+        y: originalScale.y * bump,
+        z: originalScale.z * bump,
+      });
+
       setTimeout(() => {
-        this.el.setAttribute('scale', originalScale)
-      }, 150)
+        this.el.setAttribute('scale', originalScale);
+      }, 150);
     } catch (e) {
-      console.error('Hit animation error:', e)
+      console.error('Hit animation error:', e);
     }
   },
 
-  showHitFeedback: function (localPosition, points, zone) {
-    // Feedback simple
-    console.log(`✓ Hit feedback: +${points} points in ${zone} zone`)
+  showHitFeedback(localPosition, points, zone) {
+    console.log(`✓ Hit feedback: +${points} points in ${zone} zone`);
   },
 
-  destroy: function (lastPoints) {
-    console.log('🎉 Cible détruite!')
-    
+  destroy(lastPoints) {
+    console.log('🎉 Cible détruite!');
+
     try {
-      // Animation de destruction simplifiée
-      let elapsed = 0
-      const duration = 400
-      const startScale = this.el.getAttribute('scale')
-      const startRotation = this.el.getAttribute('rotation')
-      
+      let elapsed = 0;
+      const duration = 400;
+      const { x: sx, y: sy, z: sz } = this.el.getAttribute('scale');
+      const { x: rx, y: ry, z: rz } = this.el.getAttribute('rotation');
+
       const animateDestroy = () => {
-        elapsed += 16
-        const progress = Math.min(elapsed / duration, 1)
-        
-        // Scale to 0
-        this.el.setAttribute('scale', `${startScale.x * (1 - progress)} ${startScale.y * (1 - progress)} ${startScale.z * (1 - progress)}`)
-        
-        // Rotation
-        this.el.setAttribute('rotation', `${startRotation.x} ${startRotation.y + (progress * 360)} ${startRotation.z}`)
-        
+        elapsed += 16;
+        const progress = Math.min(elapsed / duration, 1);
+        const shrink = 1 - progress;
+
+        this.el.setAttribute('scale', `${sx * shrink} ${sy * shrink} ${sz * shrink}`);
+        this.el.setAttribute('rotation', `${rx} ${ry + progress * 360} ${rz}`);
+
         if (progress < 1) {
-          requestAnimationFrame(animateDestroy)
+          requestAnimationFrame(animateDestroy);
         }
-      }
-      
-      animateDestroy()
+      };
+
+      animateDestroy();
     } catch (e) {
-      console.error('Destroy animation error:', e)
+      console.error('Destroy animation error:', e);
     }
 
-    // Émettre événement de destruction
     try {
       this.el.sceneEl.emit('target-destroyed', {
         points: this.data.points,
         totalHits: this.hitCount,
         bonusPoints: Math.floor(lastPoints * 0.5),
         surfaceType: this.surfaceType,
-        targetId: this.el.id
-      })
+        targetId: this.el.id,
+      });
     } catch (e) {
-      console.error('Event emission error:', e)
+      console.error('Event emission error:', e);
     }
 
-    // Supprimer après l'animation
-    setTimeout(() => {
-      if (this.el.parentNode) {
-        this.el.parentNode.removeChild(this.el)
-      }
-    }, 450)
+    setTimeout(() => safeRemove(this.el), 450);
   },
 
-  setupMovement: function () {
-    // Mouvement oscillant pour les cibles mobiles (manuelle, sans A-Frame animation)
+  setupMovement() {
     try {
-      const basePos = this.el.getAttribute('position')
-      const speed = 0.002
-      let time = 0
-      
-      const moveInterval = setInterval(() => {
-        if (!this.el || !this.el.parentNode) {
-          clearInterval(moveInterval)
-          return
+      const { x: bx, y: by, z: bz } = this.el.getAttribute('position');
+      const speed = 0.002;
+      let time = 0;
+
+      this.moveInterval = setInterval(() => {
+        if (!this.el?.parentNode) {
+          this.moveInterval = clearTimer(this.moveInterval, 'interval');
+          return;
         }
-        
-        time += 16
-        const offsetX = Math.sin(time * speed) * 1.5
-        const offsetY = Math.cos(time * speed) * 0.5
-        const offsetZ = Math.sin(time * speed * 0.5) * 1
-        
-        this.el.setAttribute('position', `${basePos.x + offsetX} ${basePos.y + offsetY} ${basePos.z + offsetZ}`)
-      }, 16)
-      
-      this.moveInterval = moveInterval
-      console.log('🎯 Cible mobile activée')
+
+        time += 16;
+        const t = time * speed;
+        this.el.setAttribute(
+          'position',
+          `${bx + Math.sin(t) * 1.5} ${by + Math.cos(t) * 0.5} ${bz + Math.sin(t * 0.5) * 1}`,
+        );
+      }, 16);
+
+      console.log('🎯 Cible mobile activée');
     } catch (e) {
-      console.error('Movement error:', e)
+      console.error('Movement error:', e);
     }
   },
 
-  remove: function () {
-    // Nettoyer l'intervalle de mouvement
-    if (this.moveInterval) {
-      clearInterval(this.moveInterval)
-      this.moveInterval = null
-    }
-  }
-})
+  remove() {
+    this.moveInterval = clearTimer(this.moveInterval, 'interval');
+  },
+});

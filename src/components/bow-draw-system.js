@@ -1,13 +1,33 @@
-AFRAME.registerComponent("bow-draw-system", {
+/**
+ * Composant bow-draw-system - Mecanique VR de bandage d'arc
+ * Coordonne les deux mains pour bander et tirer des fleches
+ * Snap distance, puissance proportionnelle, indicateur visuel
+ */
+
+import { playSound, disposeThreeObject } from '../utils.js';
+
+/* Vecteurs reutilises pour eviter les allocations dans tick() */
+const _leftPos = new THREE.Vector3();
+const _rightPos = new THREE.Vector3();
+const _color = new THREE.Color();
+
+/* Quaternion/Euler de compensation reutilises (constantes) */
+const _compensationQuat = new THREE.Quaternion().setFromEuler(
+  new THREE.Euler(THREE.MathUtils.degToRad(-90), 0, 0, 'XYZ'),
+);
+const _aimDir = new THREE.Vector3();
+const _aimQuat = new THREE.Quaternion();
+
+AFRAME.registerComponent('bow-draw-system', {
   schema: {
-    maxArrowSpeed: { type: "number", default: 80 }, // Vitesse maximale de la flèche
-    minArrowSpeed: { type: "number", default: 8 },
-    maxDrawDistance: { type: "number", default: 0.45 }, // Distance maximale de tirage en mètres des mains
-    minDrawDistance: { type: "number", default: 0.12 }, // Distance minimale pour tirer 
-    snapDistance: { type: "number", default: 0.2 }, // Distance pour "accrocher" la corde
+    maxArrowSpeed: { type: 'number', default: 80 },
+    minArrowSpeed: { type: 'number', default: 8 },
+    maxDrawDistance: { type: 'number', default: 0.45 },
+    minDrawDistance: { type: 'number', default: 0.12 },
+    snapDistance: { type: 'number', default: 0.2 },
   },
 
-  init: function () {
+  init() {
     this.leftHand = null;
     this.rightHand = null;
 
@@ -15,43 +35,36 @@ AFRAME.registerComponent("bow-draw-system", {
     this.drawDistance = 0;
     this.triggerPressed = false;
 
-    this.tempVectorLeft = new THREE.Vector3();
-    this.tempVectorRight = new THREE.Vector3();
-
-    // Indicateur visuel de la corde tendue
     this.createDrawIndicator();
 
-    console.log("🏹 Bow Draw System initialisé");
+    console.log('🏹 Bow Draw System initialisé');
   },
 
-  play: function () {
-    // Récupérer les références des mains
-    this.leftHand = document.querySelector("#leftHand");
-    this.rightHand = document.querySelector("#rightHand");
+  play() {
+    this.leftHand = document.querySelector('#leftHand');
+    this.rightHand = document.querySelector('#rightHand');
 
     if (!this.leftHand || !this.rightHand) {
-      console.warn("⚠️ Mains non trouvées, retry...");
+      console.warn('⚠️ Mains non trouvées, retry...');
       setTimeout(() => this.play(), 500);
       return;
     }
 
-    // Événements de la gâchette droite
-    this.onTriggerDown = this.handleTriggerDown.bind(this);
-    this.onTriggerUp = this.handleTriggerUp.bind(this);
+    this.onTriggerDown = () => this.handleTriggerDown();
+    this.onTriggerUp = () => this.handleTriggerUp();
 
-    this.rightHand.addEventListener("triggerdown", this.onTriggerDown);
-    this.rightHand.addEventListener("triggerup", this.onTriggerUp);
-    this.rightHand.addEventListener("abuttondown", this.onTriggerDown);
-    this.rightHand.addEventListener("abuttonup", this.onTriggerUp);
+    this.rightHand.addEventListener('triggerdown', this.onTriggerDown);
+    this.rightHand.addEventListener('triggerup', this.onTriggerUp);
+    this.rightHand.addEventListener('abuttondown', this.onTriggerDown);
+    this.rightHand.addEventListener('abuttonup', this.onTriggerUp);
 
-    console.log("✅ Events attachés aux mains");
+    console.log('✅ Events attachés aux mains');
   },
 
-  createDrawIndicator: function () {
-    // Ligne visuelle pour montrer la corde tendue
-    const geometry = new THREE.BufferGeometry();
+  createDrawIndicator() {
     const positions = new Float32Array([0, 0, 0, 0, 0, 0]);
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
     const material = new THREE.LineBasicMaterial({
       color: 0x00ff00,
@@ -64,7 +77,6 @@ AFRAME.registerComponent("bow-draw-system", {
     this.drawLine.visible = false;
     this.el.sceneEl.object3D.add(this.drawLine);
 
-    // Sphère pour montrer où est la main droite
     const sphereGeo = new THREE.SphereGeometry(0.03, 16, 16);
     const sphereMat = new THREE.MeshBasicMaterial({
       color: 0xff0000,
@@ -76,29 +88,23 @@ AFRAME.registerComponent("bow-draw-system", {
     this.el.sceneEl.object3D.add(this.handIndicator);
   },
 
-  handleTriggerDown: function () {
+  handleTriggerDown() {
     if (!this.leftHand || !this.rightHand) return;
 
     this.triggerPressed = true;
 
-    // Vérifier si les mains sont assez proches pour "accrocher" la corde
-    this.leftHand.object3D.getWorldPosition(this.tempVectorLeft);
-    this.rightHand.object3D.getWorldPosition(this.tempVectorRight);
+    this.leftHand.object3D.getWorldPosition(_leftPos);
+    this.rightHand.object3D.getWorldPosition(_rightPos);
 
-    const distance = this.tempVectorLeft.distanceTo(this.tempVectorRight);
+    const distance = _leftPos.distanceTo(_rightPos);
 
     if (distance < this.data.snapDistance) {
       this.isDrawing = true;
       this.drawLine.visible = true;
       this.handIndicator.visible = true;
-      console.log("🎯 Corde accrochée !");
+      console.log('🎯 Corde accrochée !');
 
-      // Son de grincement de la corde
-      const creakSound = document.getElementById("bow-creak-sound");
-      if (creakSound) {
-        creakSound.currentTime = 0;
-        creakSound.play().catch((e) => {});
-      }
+      playSound('bow-creak-sound');
     } else {
       console.log(
         `❌ Trop loin pour accrocher (${distance.toFixed(2)}m > ${this.data.snapDistance}m)`,
@@ -106,11 +112,10 @@ AFRAME.registerComponent("bow-draw-system", {
     }
   },
 
-  handleTriggerUp: function () {
+  handleTriggerUp() {
     this.triggerPressed = false;
 
     if (this.isDrawing) {
-      // Tirer la flèche !
       this.shootArrow();
       this.isDrawing = false;
       this.drawLine.visible = false;
@@ -118,129 +123,89 @@ AFRAME.registerComponent("bow-draw-system", {
     }
   },
 
-  tick: function () {
+  tick() {
     if (!this.isDrawing || !this.leftHand || !this.rightHand) return;
 
-    // Calculer la distance de tirage
-    this.leftHand.object3D.getWorldPosition(this.tempVectorLeft);
-    this.rightHand.object3D.getWorldPosition(this.tempVectorRight);
+    this.leftHand.object3D.getWorldPosition(_leftPos);
+    this.rightHand.object3D.getWorldPosition(_rightPos);
 
-    this.drawDistance = this.tempVectorLeft.distanceTo(this.tempVectorRight);
+    this.drawDistance = _leftPos.distanceTo(_rightPos);
 
-    // Mettre à jour la ligne visuelle
     const positions = this.drawLine.geometry.attributes.position.array;
-    positions[0] = this.tempVectorLeft.x;
-    positions[1] = this.tempVectorLeft.y;
-    positions[2] = this.tempVectorLeft.z;
-    positions[3] = this.tempVectorRight.x;
-    positions[4] = this.tempVectorRight.y;
-    positions[5] = this.tempVectorRight.z;
+    positions[0] = _leftPos.x;
+    positions[1] = _leftPos.y;
+    positions[2] = _leftPos.z;
+    positions[3] = _rightPos.x;
+    positions[4] = _rightPos.y;
+    positions[5] = _rightPos.z;
     this.drawLine.geometry.attributes.position.needsUpdate = true;
 
-    // Mettre à jour l'indicateur de main
-    this.handIndicator.position.copy(this.tempVectorRight);
+    this.handIndicator.position.copy(_rightPos);
 
-    // Changer la couleur en fonction de la puissance
     const drawRatio = Math.min(
       this.drawDistance / this.data.maxDrawDistance,
       1,
     );
-    const color = new THREE.Color();
-    color.setHSL(0.3 - drawRatio * 0.3, 1.0, 0.5); // De vert à rouge
-    this.drawLine.material.color = color;
-    this.handIndicator.material.color = color;
+    _color.setHSL(0.3 - drawRatio * 0.3, 1.0, 0.5);
+    this.drawLine.material.color.copy(_color);
+    this.handIndicator.material.color.copy(_color);
   },
 
-  shootArrow: function () {
+  shootArrow() {
     if (this.drawDistance < this.data.minDrawDistance) {
-      console.log("⚠️ Pas assez tiré !");
+      console.log('⚠️ Pas assez tiré !');
       return;
     }
 
-    // Calcul puissance
-    const drawRatio = Math.min(
-      this.drawDistance / this.data.maxDrawDistance,
-      1,
-    );
-    const arrowSpeed =
-      this.data.minArrowSpeed +
-      (this.data.maxArrowSpeed - this.data.minArrowSpeed) * drawRatio;
+    const { minArrowSpeed, maxArrowSpeed, maxDrawDistance } = this.data;
+    const drawRatio = Math.min(this.drawDistance / maxDrawDistance, 1);
+    const arrowSpeed = minArrowSpeed + (maxArrowSpeed - minArrowSpeed) * drawRatio;
 
-    // --- DIRECTION SIMPLE : Copier directement l'orientation de l'arc ---
-    this.leftHand.object3D.getWorldPosition(this.tempVectorLeft);
-    
-    // Utiliser directement la rotation de la main gauche (arc)
-    const aimQuaternion = new THREE.Quaternion();
-    this.leftHand.object3D.getWorldQuaternion(aimQuaternion);
-    
+    this.leftHand.object3D.getWorldPosition(_leftPos);
+    this.leftHand.object3D.getWorldQuaternion(_aimQuat);
 
-    // La flèche doit pointer vers l'avant (-Z)
-    const compensationEuler = new THREE.Euler(
-      THREE.MathUtils.degToRad(-90),
-      THREE.MathUtils.degToRad(0),
-      THREE.MathUtils.degToRad(0),
-      'XYZ'
-    );
-    const compensationQuaternion = new THREE.Quaternion();
-    compensationQuaternion.setFromEuler(compensationEuler);
-    
-    // Appliquer la compensation à la rotation finale
-    aimQuaternion.multiply(compensationQuaternion);
-    
-    // Calculer la direction pour le log
-    const aimDirection = new THREE.Vector3(0, 0, -1);
-    aimDirection.applyQuaternion(aimQuaternion);
+    _aimQuat.multiply(_compensationQuat);
+
+    _aimDir.set(0, 0, -1).applyQuaternion(_aimQuat);
 
     console.log(
       `🏹 TIRE ! Distance: ${this.drawDistance.toFixed(2)}m, Puissance: ${(drawRatio * 100).toFixed(0)}%, Vitesse: ${arrowSpeed.toFixed(1)}`,
     );
-    console.log("🎯 Direction visée:", {
-      x: aimDirection.x.toFixed(2),
-      y: aimDirection.y.toFixed(2),
-      z: aimDirection.z.toFixed(2),
+    console.log('🎯 Direction visée:', {
+      x: _aimDir.x.toFixed(2),
+      y: _aimDir.y.toFixed(2),
+      z: _aimDir.z.toFixed(2),
     });
 
-    // Son de tir de l'arc
-    const shootSound = document.getElementById("shoot-sound");
-    if (shootSound) {
-      shootSound.currentTime = 0;
-      shootSound.play().catch((e) => {});
-    }
+    playSound('shoot-sound');
+    playSound('arrow-fly-sound');
 
-    // Son de sifflement de la flèche
-    const arrowFlySound = document.getElementById("arrow-fly-sound");
-    if (arrowFlySound) {
-      arrowFlySound.currentTime = 0;
-      arrowFlySound.play().catch((e) => {});
-    }
+    this.createFlyingArrow(_leftPos, _aimQuat, arrowSpeed);
 
-    // Tirer avec la nouvelle rotation calculée
-    this.createFlyingArrow(this.tempVectorLeft, aimQuaternion, arrowSpeed);
-
-    // Émettre l'événement pour le compteur de flèches
-    this.el.sceneEl.emit("arrow-shot");
+    this.el.sceneEl.emit('arrow-shot');
   },
 
-  createFlyingArrow: function (position, rotation, speed) {
-    const scene = this.el.sceneEl;
-    const arrow = document.createElement("a-entity");
+  createFlyingArrow(position, rotation, speed) {
+    const arrow = document.createElement('a-entity');
 
-    arrow.setAttribute("gltf-model", "fleche.glb");
-    arrow.setAttribute("position", position);
+    arrow.setAttribute('gltf-model', 'fleche.glb');
+    arrow.setAttribute('position', position);
     arrow.object3D.quaternion.copy(rotation);
-    arrow.setAttribute("arrow-physics", `speed: ${speed}`);
+    arrow.setAttribute('arrow-physics', `speed: ${speed}`);
 
-    scene.appendChild(arrow);
+    this.el.sceneEl.appendChild(arrow);
   },
 
-  remove: function () {
+  remove() {
     if (this.rightHand) {
-      this.rightHand.removeEventListener("triggerdown", this.onTriggerDown);
-      this.rightHand.removeEventListener("triggerup", this.onTriggerUp);
-      this.rightHand.removeEventListener("abuttondown", this.onTriggerDown);
-      this.rightHand.removeEventListener("abuttonup", this.onTriggerUp);
+      this.rightHand.removeEventListener('triggerdown', this.onTriggerDown);
+      this.rightHand.removeEventListener('triggerup', this.onTriggerUp);
+      this.rightHand.removeEventListener('abuttondown', this.onTriggerDown);
+      this.rightHand.removeEventListener('abuttonup', this.onTriggerUp);
     }
-    if (this.drawLine) this.el.sceneEl.object3D.remove(this.drawLine);
-    if (this.handIndicator) this.el.sceneEl.object3D.remove(this.handIndicator);
+
+    const sceneObj = this.el.sceneEl?.object3D;
+    disposeThreeObject(this.drawLine, sceneObj);
+    disposeThreeObject(this.handIndicator, sceneObj);
   },
 });

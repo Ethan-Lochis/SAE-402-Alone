@@ -1,11 +1,18 @@
 /**
- * Composant scene-mesh-handler pour WebXR
- * Gère le Hit Test pour détecter les surfaces réelles
- * et fournit une API simple pour le spawn des cibles
+ * Composant scene-mesh-handler pour A-Frame
+ * Detection de surfaces WebXR (Hit Test API) avec fallback mock
  */
 
-AFRAME.registerComponent("scene-mesh-handler", {
-  init: function () {
+import { safeRemove, toVec3, toQuat } from '../utils.js';
+
+const MOCK_SURFACES = [
+  { position: '2 1.5 -3', rotation: '0 90 0', width: 2, height: 2, label: 'Mur droit' },
+  { position: '-2 1.5 -3', rotation: '0 -90 0', width: 2, height: 2, label: 'Mur gauche' },
+  { position: '0 0 -5', rotation: '-90 0 0', width: 4, height: 4, label: 'Sol virtuel' },
+];
+
+AFRAME.registerComponent('scene-mesh-handler', {
+  init() {
     this.sceneMeshes = [];
     this.spawnSurfaces = [];
     this.isWebXRSupported = false;
@@ -17,62 +24,53 @@ AFRAME.registerComponent("scene-mesh-handler", {
     this.hasHitTestThisFrame = false;
     this.usesMockSurfaces = false;
 
-    if ("xr" in navigator) {
+    if ('xr' in navigator) {
       this.checkWebXRSupport();
     } else {
-      console.log("⚠️ WebXR non disponible sur ce navigateur");
+      console.log('\u26a0\ufe0f WebXR non disponible sur ce navigateur');
     }
   },
 
   async checkWebXRSupport() {
     try {
-      const isARSupported = await navigator.xr?.isSessionSupported(
-        "immersive-ar",
-      );
-      const isVRSupported = await navigator.xr?.isSessionSupported(
-        "immersive-vr",
-      );
-
+      const isARSupported = await navigator.xr?.isSessionSupported('immersive-ar');
+      const isVRSupported = await navigator.xr?.isSessionSupported('immersive-vr');
       this.isWebXRSupported = isARSupported || isVRSupported;
 
       if (this.isWebXRSupported) {
-        console.log(
-          `✅ WebXR supporté - AR: ${isARSupported}, VR: ${isVRSupported}`,
-        );
+        console.log(`\u2705 WebXR support\u00e9 - AR: ${isARSupported}, VR: ${isVRSupported}`);
         this.setupSceneMeshTracking();
       } else {
-        console.log("⚠️ WebXR non supporté sur cet appareil");
+        console.log('\u26a0\ufe0f WebXR non support\u00e9 sur cet appareil');
       }
     } catch (error) {
-      console.log("⚠️ Erreur de vérification WebXR:", error);
+      console.log('\u26a0\ufe0f Erreur de v\u00e9rification WebXR:', error);
     }
   },
 
-  setupSceneMeshTracking: function () {
-    const sceneEl = this.el.sceneEl;
-
-    sceneEl.addEventListener("enter-vr", () => {
-      console.log("🥽 Entrée en mode VR - Activation du Scene Mesh");
+  setupSceneMeshTracking() {
+    const { sceneEl } = this.el;
+    sceneEl.addEventListener('enter-vr', () => {
+      console.log('\ud83e\udd7d Entr\u00e9e en mode VR - Activation du Scene Mesh');
       this.startSceneMeshDetection();
     });
-
-    sceneEl.addEventListener("exit-vr", () => {
-      console.log("👋 Sortie du mode VR - Désactivation du Scene Mesh");
+    sceneEl.addEventListener('exit-vr', () => {
+      console.log('\ud83d\udc4b Sortie du mode VR - D\u00e9sactivation du Scene Mesh');
       this.stopSceneMeshDetection();
     });
   },
 
-  startSceneMeshDetection: function () {
-    const renderer = this.el.sceneEl.renderer;
+  startSceneMeshDetection() {
+    const { renderer } = this.el.sceneEl;
     this.xrSession = renderer.xr.getSession();
     this.xrRefSpace = renderer.xr.getReferenceSpace();
 
     if (!this.xrSession) {
-      console.warn("⚠️ Session XR non disponible");
+      console.warn('\u26a0\ufe0f Session XR non disponible');
       return;
     }
 
-    this.el.sceneEl.emit("scene-mesh-handler-ready", {});
+    this.el.sceneEl.emit('scene-mesh-handler-ready', {});
 
     if (this.xrSession.requestHitTestSource) {
       this.initializeHitTest();
@@ -83,90 +81,54 @@ AFRAME.registerComponent("scene-mesh-handler", {
 
   async initializeHitTest() {
     try {
-      const viewerSpace = await this.xrSession.requestReferenceSpace("viewer");
-      this.hitTestSource = await this.xrSession.requestHitTestSource({
-        space: viewerSpace,
-      });
-      console.log("🎯 Hit-test initialisé (viewer space)");
+      const viewerSpace = await this.xrSession.requestReferenceSpace('viewer');
+      this.hitTestSource = await this.xrSession.requestHitTestSource({ space: viewerSpace });
+      console.log('\ud83c\udfaf Hit-test initialis\u00e9 (viewer space)');
     } catch (error) {
-      console.warn("⚠️ Hit-test viewer impossible, fallback local", error);
+      console.warn('\u26a0\ufe0f Hit-test viewer impossible, fallback local', error);
       try {
-        const localSpace = await this.xrSession.requestReferenceSpace("local");
-        this.hitTestSource = await this.xrSession.requestHitTestSource({
-          space: localSpace,
-        });
-        console.log("🎯 Hit-test initialisé (local space)");
+        const localSpace = await this.xrSession.requestReferenceSpace('local');
+        this.hitTestSource = await this.xrSession.requestHitTestSource({ space: localSpace });
+        console.log('\ud83c\udfaf Hit-test initialis\u00e9 (local space)');
       } catch (err) {
-        console.warn("⚠️ Hit-test indisponible, fallback mock", err);
+        console.warn('\u26a0\ufe0f Hit-test indisponible, fallback mock', err);
         this.trackSceneMeshes();
       }
     }
   },
 
-  trackSceneMeshes: function () {
+  trackSceneMeshes() {
     if (this.hitTestSource) return;
-
-    console.log("⚠️ Hit-test indisponible - Utilisation de surfaces mockées");
+    console.log('\u26a0\ufe0f Hit-test indisponible - Utilisation de surfaces mock\u00e9es');
     this.usesMockSurfaces = true;
     this.createMockSceneMesh();
   },
 
-  createMockSceneMesh: function () {
-    const mockSurfaces = [
-      {
-        position: "2 1.5 -3",
-        rotation: "0 90 0",
-        width: 2,
-        height: 2,
-        label: "Mur droit",
-      },
-      {
-        position: "-2 1.5 -3",
-        rotation: "0 -90 0",
-        width: 2,
-        height: 2,
-        label: "Mur gauche",
-      },
-      {
-        position: "0 0 -5",
-        rotation: "-90 0 0",
-        width: 4,
-        height: 4,
-        label: "Sol virtuel",
-      },
-    ];
+  createMockSceneMesh() {
+    const { sceneEl } = this.el;
 
-    mockSurfaces.forEach((surface, index) => {
-      const meshEntity = document.createElement("a-plane");
-      meshEntity.setAttribute("position", surface.position);
-      meshEntity.setAttribute("rotation", surface.rotation);
-      meshEntity.setAttribute("width", surface.width);
-      meshEntity.setAttribute("height", surface.height);
-      meshEntity.setAttribute("material", {
-        color: "#4CC3D9",
-        opacity: 0.3,
-        transparent: true,
-        wireframe: true,
-      });
-      meshEntity.setAttribute("static-body", {
-        shape: "box",
-      });
-      meshEntity.setAttribute("class", "scene-mesh spawn-surface");
+    MOCK_SURFACES.forEach(({ position, rotation, width, height, label }, index) => {
+      const meshEntity = document.createElement('a-plane');
+      meshEntity.setAttribute('position', position);
+      meshEntity.setAttribute('rotation', rotation);
+      meshEntity.setAttribute('width', width);
+      meshEntity.setAttribute('height', height);
+      meshEntity.setAttribute('material', { color: '#4CC3D9', opacity: 0.3, transparent: true, wireframe: true });
+      meshEntity.setAttribute('static-body', { shape: 'box' });
+      meshEntity.setAttribute('class', 'scene-mesh spawn-surface');
       meshEntity.id = `scene-mesh-${index}`;
 
-      this.el.sceneEl.appendChild(meshEntity);
+      sceneEl.appendChild(meshEntity);
       this.sceneMeshes.push(meshEntity);
       this.spawnSurfaces.push(meshEntity);
-
-      console.log(`✅ Surface détectée ajoutée: ${surface.label}`);
+      console.log(`\u2705 Surface d\u00e9tect\u00e9e ajout\u00e9e: ${label}`);
     });
 
     this.emitSceneMeshUpdate();
   },
 
-  tick: function () {
+  tick() {
     this.hasHitTestThisFrame = false;
-
     if (!this.xrSession || !this.hitTestSource) return;
 
     const frame = this.el.sceneEl.frame;
@@ -174,78 +136,58 @@ AFRAME.registerComponent("scene-mesh-handler", {
 
     try {
       const hitTestResults = frame.getHitTestResults(this.hitTestSource);
-      if (!hitTestResults || hitTestResults.length === 0) return;
+      if (!hitTestResults?.length) return;
 
-      const hit = hitTestResults[0];
-      const pose = hit.getPose(this.xrRefSpace);
+      const pose = hitTestResults[0].getPose(this.xrRefSpace);
       if (!pose) return;
 
-      const pos = pose.transform.position;
-      const quat = pose.transform.orientation;
+      const { position: pos, orientation: quat } = pose.transform;
+      const position = toVec3(pos);
+      const quaternion = toQuat(quat);
+      const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(quaternion).normalize();
 
-      const position = new THREE.Vector3(pos.x, pos.y, pos.z);
-      const quaternion = new THREE.Quaternion(quat.x, quat.y, quat.z, quat.w);
-      const normal = new THREE.Vector3(0, 0, 1)
-        .applyQuaternion(quaternion)
-        .normalize();
-
-      const surface = {
-        position,
-        quaternion,
-        normal,
-        width: 1,
-        height: 1,
-        stability: 1,
-      };
-
+      const surface = { position, quaternion, normal, width: 1, height: 1, stability: 1 };
       this.detectedSurfaces.unshift(surface);
-      if (this.detectedSurfaces.length > 3) {
-        this.detectedSurfaces.pop();
-      }
+      if (this.detectedSurfaces.length > 3) this.detectedSurfaces.pop();
 
       this.hasHitTestThisFrame = true;
       this.lastResultTime = Date.now();
 
-      this.el.sceneEl.emit("surface-detected", {
-        position,
-        normal,
-        quaternion,
-        stability: 1,
+      this.el.sceneEl.emit('surface-detected', {
+        position, normal, quaternion, stability: 1,
         isFloor: normal.y > 0.7,
         isWall: Math.abs(normal.y) < 0.4,
         isCeiling: normal.y < -0.7,
       });
     } catch (error) {
-      console.warn("⚠️ Hit-test error:", error.message);
+      console.warn('\u26a0\ufe0f Hit-test error:', error.message);
     }
   },
 
-  emitSceneMeshUpdate: function () {
-    this.el.sceneEl.emit("scene-mesh-updated", {
-      surfaces: this.spawnSurfaces.slice(),
-    });
+  emitSceneMeshUpdate() {
+    this.el.sceneEl.emit('scene-mesh-updated', { surfaces: this.spawnSurfaces.slice() });
   },
 
-  getDetectedSurface: function () {
-    if (this.detectedSurfaces.length === 0) return null;
+  getDetectedSurface() {
+    if (!this.detectedSurfaces.length) return null;
 
-    const surface = this.detectedSurfaces[0];
-    const euler = new THREE.Euler().setFromQuaternion(surface.quaternion);
+    const { position, quaternion, normal } = this.detectedSurfaces[0];
+    const euler = new THREE.Euler().setFromQuaternion(quaternion);
 
     return {
-      position: surface.position,
+      position,
       rotation: {
         x: THREE.MathUtils.radToDeg(euler.x),
         y: THREE.MathUtils.radToDeg(euler.y),
         z: THREE.MathUtils.radToDeg(euler.z),
       },
-      normal: surface.normal,
-      type: Math.abs(surface.normal.y) > 0.7 ? "horizontal" : "vertical",
+      normal,
+      type: Math.abs(normal.y) > 0.7 ? 'horizontal' : 'vertical',
       isRealSurface: true,
     };
   },
 
-  isHitTestActive: function () {
+  isHitTestActive() {
     if (!this.xrSession || !this.hitTestSource) return false;
     if (this.hasHitTestThisFrame) return true;
     if (!this.lastResultTime) return false;
@@ -257,31 +199,21 @@ AFRAME.registerComponent("scene-mesh-handler", {
 
     return new Promise((resolve) => {
       this.xrSession.requestAnimationFrame(async (time, frame) => {
-        if (!frame || !frame.createAnchor) {
-          resolve(null);
-          return;
-        }
-
+        if (!frame?.createAnchor) { resolve(null); return; }
         try {
           const anchor = await frame.createAnchor(pose, this.xrRefSpace);
           resolve(anchor || null);
-        } catch (error) {
-          resolve(null);
-        }
+        } catch { resolve(null); }
       });
     });
   },
 
-  deleteAnchor: function (anchor) {
-    if (anchor && typeof anchor.delete === "function") {
-      anchor.delete();
-    }
+  deleteAnchor(anchor) {
+    if (typeof anchor?.delete === 'function') anchor.delete();
   },
 
-  stopSceneMeshDetection: function () {
-    this.sceneMeshes.forEach((mesh) => {
-      if (mesh.parentNode) mesh.parentNode.removeChild(mesh);
-    });
+  stopSceneMeshDetection() {
+    this.sceneMeshes.forEach((mesh) => safeRemove(mesh));
     this.sceneMeshes = [];
     this.spawnSurfaces = [];
     this.hitTestSource = null;
@@ -290,7 +222,7 @@ AFRAME.registerComponent("scene-mesh-handler", {
     this.detectedSurfaces = [];
   },
 
-  remove: function () {
+  remove() {
     this.stopSceneMeshDetection();
   },
 });
