@@ -23,7 +23,7 @@ AFRAME.registerComponent('bow-draw-system', {
     maxArrowSpeed: { type: 'number', default: 80 },
     minArrowSpeed: { type: 'number', default: 8 },
     maxDrawDistance: { type: 'number', default: 0.45 },
-    minDrawDistance: { type: 'number', default: 0.12 },
+    minDrawDistance: { type: 'number', default: 0.25 },
     snapDistance: { type: 'number', default: 0.2 },
   },
 

@@ -16,7 +16,7 @@ const _currentPos = new THREE.Vector3();
 
 AFRAME.registerComponent('arrow-physics', {
   schema: {
-    speed: { type: 'number', default: 55 },
+    speed: { type: 'number', default: 45 },
     gravity: { type: 'number', default: 0.005 },
     mass: { type: 'number', default: 0.001 },
     dragCoefficient: { type: 'number', default: 0.0005 },
